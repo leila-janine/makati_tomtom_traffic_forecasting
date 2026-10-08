@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -11,7 +12,6 @@ import numpy as np
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 from prototype_core import (
     HORIZONS,
@@ -54,6 +54,7 @@ st.markdown(
 
 MAKATI_TIMEZONE = ZoneInfo("Asia/Manila")
 AUTO_REFRESH_MILLISECONDS = 15 * 60 * 1000
+AUTO_REFRESH_SECONDS = AUTO_REFRESH_MILLISECONDS // 1000
 
 
 def secret_or_environment(name: str) -> str:
@@ -67,6 +68,18 @@ def secret_or_environment(name: str) -> str:
 def cached_live_snapshot(api_key: str) -> tuple[pd.DataFrame, datetime]:
     """Fetch one TomTom snapshot and reuse it for at most 15 minutes."""
     return fetch_live_snapshot(api_key), datetime.now(MAKATI_TIMEZONE)
+
+
+@st.fragment(run_every=AUTO_REFRESH_SECONDS)
+def schedule_full_refresh() -> None:
+    """Rerun the complete dashboard after each 15 minute interval."""
+    current_time = time.monotonic()
+    previous_time = st.session_state.setdefault(
+        "tomtom_last_full_refresh", current_time
+    )
+    if current_time - previous_time >= AUTO_REFRESH_SECONDS - 1:
+        st.session_state["tomtom_last_full_refresh"] = current_time
+        st.rerun()
 
 
 with st.sidebar:
@@ -95,11 +108,7 @@ if not api_key:
     )
     st.stop()
 
-st_autorefresh(
-    interval=AUTO_REFRESH_MILLISECONDS,
-    limit=None,
-    key="tomtom_traffic_auto_refresh",
-)
+schedule_full_refresh()
 
 with st.spinner("Loading current TomTom traffic..."):
     try:

@@ -54,7 +54,7 @@ The live dashboard requires a TomTom API key:
 TOMTOM_API_KEY = "replace-with-your-key"
 ```
 
-For Streamlit Community Cloud, add `TOMTOM_API_KEY` in the application's Secrets settings. The website fetches traffic automatically on the first visit and refreshes it every 15 minutes. A shared 15 minute cache prevents ordinary interface interactions from consuming another set of API calls.
+For Streamlit Community Cloud, add `TOMTOM_API_KEY` in the application's Secrets settings. The website fetches traffic automatically on the first visit and refreshes it every 15 minutes through Streamlit's built in timed fragment. A shared 15 minute cache prevents ordinary interface interactions from consuming another set of API calls.
 
 ## Validate the repository
 
