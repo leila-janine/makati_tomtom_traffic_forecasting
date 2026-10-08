@@ -1,0 +1,97 @@
+{
+  "format": "TomTom A3T GCN prepared dataset",
+  "nodes": 88,
+  "directed_road_edges": 86,
+  "self_connections": 88,
+  "reports": [
+    {
+      "month": "may",
+      "period": "am",
+      "split": "train",
+      "intervals": 24
+    },
+    {
+      "month": "may",
+      "period": "pm",
+      "split": "train",
+      "intervals": 24
+    },
+    {
+      "month": "june",
+      "period": "am",
+      "split": "val",
+      "intervals": 24
+    },
+    {
+      "month": "june",
+      "period": "pm",
+      "split": "val",
+      "intervals": 24
+    },
+    {
+      "month": "july",
+      "period": "am",
+      "split": "test",
+      "intervals": 24
+    },
+    {
+      "month": "july",
+      "period": "pm",
+      "split": "test",
+      "intervals": 24
+    }
+  ],
+  "features": [
+    "harmonic_average_speed_kph",
+    "average_travel_time_s",
+    "travel_time_ratio",
+    "speed_limit_kph",
+    "distance_m",
+    "functional_road_class",
+    "time_sin",
+    "time_cos"
+  ],
+  "target": "harmonic_average_speed_kph",
+  "split_policy": {
+    "train": "May morning and afternoon profiles",
+    "validation": "June morning and afternoon profiles",
+    "test": "July morning and afternoon profiles"
+  },
+  "continuity_policy": "Morning and afternoon reports are separate sequences. Windows never cross the midday gap or a month boundary.",
+  "interpretation": "Each source report is a monthly aggregate traffic profile rather than a set of date-specific observations.",
+  "datasets": [
+    {
+      "horizon_minutes": 15,
+      "horizon_steps": 1,
+      "history_steps": 12,
+      "train_samples": 24,
+      "validation_samples": 24,
+      "test_samples": 24,
+      "nodes": 88,
+      "features": 8,
+      "file": "tomtom_a3tgcn_15min.npz"
+    },
+    {
+      "horizon_minutes": 30,
+      "horizon_steps": 2,
+      "history_steps": 12,
+      "train_samples": 22,
+      "validation_samples": 22,
+      "test_samples": 22,
+      "nodes": 88,
+      "features": 8,
+      "file": "tomtom_a3tgcn_30min.npz"
+    },
+    {
+      "horizon_minutes": 60,
+      "horizon_steps": 4,
+      "history_steps": 12,
+      "train_samples": 18,
+      "validation_samples": 18,
+      "test_samples": 18,
+      "nodes": 88,
+      "features": 8,
+      "file": "tomtom_a3tgcn_60min.npz"
+    }
+  ]
+}

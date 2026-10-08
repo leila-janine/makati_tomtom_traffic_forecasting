@@ -1,0 +1,39 @@
+{
+  "feature_names": [
+    "harmonic_average_speed_kph",
+    "average_travel_time_s",
+    "travel_time_ratio",
+    "speed_limit_kph",
+    "distance_m",
+    "functional_road_class",
+    "time_sin",
+    "time_cos"
+  ],
+  "feature_mean": [
+    14.293229103088379,
+    17.856290817260742,
+    1.3816429376602173,
+    46.193180084228516,
+    58.344547271728516,
+    3.0681817531585693,
+    -0.11653029918670654,
+    -0.4348970055580139
+  ],
+  "feature_std": [
+    5.328906059265137,
+    22.57411003112793,
+    0.48652467131614685,
+    10.140891075134277,
+    62.46816635131836,
+    0.9389967322349548,
+    0.7901590466499329,
+    0.41585323214530945
+  ],
+  "target_name": "harmonic_average_speed_kph",
+  "target_mean": 14.293229103088379,
+  "target_std": 5.328906059265137,
+  "fitted_on": [
+    "may_am",
+    "may_pm"
+  ]
+}
