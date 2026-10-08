@@ -11,21 +11,17 @@ import numpy as np
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
-import torch
+from streamlit_autorefresh import st_autorefresh
 
 from prototype_core import (
     HORIZONS,
-    MODELS,
-    SEEDS,
     build_api_assisted_window,
     build_edge_frame,
     build_segment_frame,
     denormalize_history_speed,
-    display_label,
     fetch_live_snapshot,
     load_dataset,
     load_metadata,
-    load_summary_metrics,
     predict,
 )
 
@@ -56,13 +52,8 @@ st.markdown(
 )
 
 
-MODEL_LABELS = {
-    "persistence": "Persistence baseline",
-    "lstm": "LSTM",
-    "tgcn": "T GCN",
-    "a3tgcn": "A3T GCN",
-}
 MAKATI_TIMEZONE = ZoneInfo("Asia/Manila")
+AUTO_REFRESH_MILLISECONDS = 15 * 60 * 1000
 
 
 def secret_or_environment(name: str) -> str:
@@ -72,196 +63,101 @@ def secret_or_environment(name: str) -> str:
         return os.getenv(name, "")
 
 
-def metrics_for(model_name: str, horizon: int) -> pd.Series:
-    summary = load_summary_metrics()
-    selected = summary[
-        (summary["model"] == model_name)
-        & (summary["horizon_minutes"] == horizon)
-    ]
-    return selected.iloc[0]
-
-
-def format_model_table(frame: pd.DataFrame) -> pd.DataFrame:
-    renamed = frame[
-        [
-            "horizon_minutes",
-            "model",
-            "runs",
-            "parameters",
-            "mae_kph_mean",
-            "mae_kph_std",
-            "rmse_kph_mean",
-            "smape_percent_mean",
-            "mean_best_epoch",
-        ]
-    ].copy()
-    renamed["model"] = renamed["model"].map(MODEL_LABELS)
-    renamed.columns = [
-        "Horizon (min)",
-        "Model",
-        "Runs",
-        "Parameters",
-        "MAE (km/h)",
-        "MAE SD",
-        "RMSE (km/h)",
-        "sMAPE (%)",
-        "Mean best epoch",
-    ]
-    return renamed.round(3)
+@st.cache_data(ttl=15 * 60, show_spinner=False)
+def cached_live_snapshot(api_key: str) -> tuple[pd.DataFrame, datetime]:
+    """Fetch one TomTom snapshot and reuse it for at most 15 minutes."""
+    return fetch_live_snapshot(api_key), datetime.now(MAKATI_TIMEZONE)
 
 
 with st.sidebar:
     st.header("Forecast controls")
-    source_mode = st.radio(
-        "Input source",
-        ["Observed July test profile", "TomTom API assisted snapshot"],
-        help=(
-            "The observed profile reproduces the held out test evaluation. "
-            "API mode replaces only the latest history step with current flow data."
-        ),
-    )
     horizon = st.select_slider(
         "Forecast horizon",
         options=list(HORIZONS),
         value=15,
         format_func=lambda value: f"{value} minutes",
     )
-    model_name = st.selectbox(
-        "Forecast model",
-        options=list(MODELS),
-        index=3,
-        format_func=lambda value: MODEL_LABELS[value],
-    )
-    ensemble = False
-    seed = 42
-    if model_name != "persistence":
-        ensemble = st.checkbox(
-            "Average all five training seeds",
-            value=True,
-            help="Averages seeds 42, 52, 62, 72, and 82 for a stable prototype output.",
-        )
-        if not ensemble:
-            seed = st.selectbox("Training seed", options=list(SEEDS))
-    prefer_cuda = st.checkbox(
-        "Use CUDA when available",
-        value=True,
-        disabled=not torch.cuda.is_available(),
-    )
+    st.caption("TomTom traffic updates automatically every 15 minutes.")
 
 
 data = load_dataset(horizon)
-labels = data["test_labels"].astype(str).tolist()
-
-with st.sidebar:
-    sample_label = st.selectbox(
-        "Reference test interval",
-        labels,
-        format_func=display_label,
-        help="This chooses the 12 interval history used for observed evaluation and API warm start.",
-    )
-    sample_index = labels.index(sample_label)
-    api_key = ""
-    if source_mode == "TomTom API assisted snapshot":
-        api_key = st.text_input(
-            "TomTom API key",
-            value=secret_or_environment("TOMTOM_API_KEY"),
-            type="password",
-            help="Store this in .streamlit/secrets.toml for deployment.",
-        )
-        st.caption("One refresh requests a snapshot for each of the 88 segment nodes.")
-        fetch_live = st.button("Fetch current traffic", width="stretch")
-        if fetch_live:
-            with st.spinner("Requesting the 88 TomTom segment points..."):
-                try:
-                    st.session_state["tomtom_live_snapshot"] = fetch_live_snapshot(api_key)
-                    st.session_state["tomtom_live_time"] = datetime.now(MAKATI_TIMEZONE)
-                except Exception as exc:
-                    st.error(f"Live request failed: {exc}")
-    st.divider()
-    st.caption("Final experiment configuration")
-    st.write("88 nodes · 86 directed edges")
-    st.write("12 history intervals · 8 features")
-    st.write("May train · June validation · July test")
-
-
+sample_index = len(data["x_test"]) - 1
 x = data["x_test"][sample_index].astype(np.float32)
 history_speed = denormalize_history_speed(x, data)
 current_speed = history_speed[-1].copy()
-actual_speed: np.ndarray | None = data["y_test_raw"][sample_index].astype(np.float32)
-input_note = f"Held out test interval: {display_label(sample_label)}"
-successful_live_nodes = 0
+actual_speed: np.ndarray | None = None
+api_key = secret_or_environment("TOMTOM_API_KEY").strip()
 
-if source_mode == "TomTom API assisted snapshot":
-    if "tomtom_live_snapshot" in st.session_state:
-        live_time = st.session_state["tomtom_live_time"]
-        x, current_speed, successful_live_nodes = build_api_assisted_window(
-            x,
-            st.session_state["tomtom_live_snapshot"],
-            data,
-            live_time.hour,
-            live_time.minute,
-        )
-        history_speed[-1] = current_speed
-        actual_speed = None
-        input_note = (
-            f"API snapshot: {live_time:%Y-%m-%d %H:%M} Philippine time · "
-            f"{successful_live_nodes}/88 nodes updated"
-        )
-    else:
-        st.info(
-            "Enter the TomTom key and select **Fetch current traffic**. Until then, "
-            "the selected July reference history is shown."
-        )
+if not api_key:
+    st.error(
+        "The TomTom API key is not configured. Add TOMTOM_API_KEY to the "
+        "Streamlit application secrets, then restart the application."
+    )
+    st.stop()
 
-with st.spinner(f"Running {MODEL_LABELS[model_name]} inference..."):
+st_autorefresh(
+    interval=AUTO_REFRESH_MILLISECONDS,
+    limit=None,
+    key="tomtom_traffic_auto_refresh",
+)
+
+with st.spinner("Loading current TomTom traffic..."):
+    try:
+        live_snapshot, live_time = cached_live_snapshot(api_key)
+    except Exception as exc:
+        st.error(f"TomTom traffic update failed: {exc}")
+        st.stop()
+
+x, current_speed, successful_live_nodes = build_api_assisted_window(
+    x,
+    live_snapshot,
+    data,
+    live_time.hour,
+    live_time.minute,
+)
+history_speed[-1] = current_speed
+
+model_name = "a3tgcn"
+with st.spinner("Running A3T GCN inference..."):
     forecast_speed, attention, device_name = predict(
         model_name,
         horizon,
         x,
-        ensemble=ensemble,
-        seed=seed,
-        prefer_cuda=prefer_cuda,
+        ensemble=True,
+        seed=42,
+        prefer_cuda=True,
     )
 
 segment_frame = build_segment_frame(current_speed, forecast_speed, actual_speed)
 edge_frame = build_edge_frame(segment_frame)
-model_metrics = metrics_for(model_name, horizon)
 
 st.title("Makati Road Segment Traffic Forecast")
 st.caption(
-    f"{input_note} · {MODEL_LABELS[model_name]} · {horizon} minute horizon · "
-    f"inference device: {device_name.upper()}"
+    f"Updated {live_time:%B %d, %Y at %I:%M %p} Philippine time · "
+    f"{successful_live_nodes}/88 road segments received · "
+    f"A3T GCN {horizon} minute forecast"
 )
 
 mean_current = float(np.mean(current_speed))
 mean_forecast = float(np.mean(forecast_speed))
-heavy_share = float((segment_frame["traffic_level"] == "Heavy").mean() * 100)
-column1, column2, column3, column4 = st.columns(4)
-column1.metric("Current mean speed", f"{mean_current:.2f} km/h")
+column1, column2 = st.columns(2)
+column1.metric("Current mean speed", f"{mean_current:.1f} km/h")
 column2.metric(
     f"Forecast at +{horizon} min",
-    f"{mean_forecast:.2f} km/h",
-    f"{mean_forecast - mean_current:+.2f} km/h",
-)
-column3.metric("Heavy traffic segments", f"{heavy_share:.1f}%")
-column4.metric(
-    "Held out test MAE",
-    f"{float(model_metrics['mae_kph_mean']):.2f} km/h",
-    help="Mean result from the final experiment. Persistence has one deterministic run.",
+    f"{mean_forecast:.1f} km/h",
+    f"{mean_forecast - mean_current:+.1f} km/h",
 )
 
-map_tab, analysis_tab, validation_tab, method_tab = st.tabs(
-    ["Network map", "Traffic analysis", "Model validation", "Method and limits"]
-)
+map_tab, analysis_tab = st.tabs(["Network map", "Traffic analysis"])
 
 with map_tab:
     st.markdown(
         """
         <div class="legend-row">
-          <span class="legend-item"><span class="legend-dot" style="background:#ab1f2e"></span>Heavy, below 25% of limit</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#ef602c"></span>Slow, 25% to below 50%</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#f5b734"></span>Moderate, 50% to below 75%</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#20a368"></span>Free flowing, at least 75%</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#ab1f2e"></span>Heavy, below 10 km/h</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#ef602c"></span>Slow, 10 to below 20 km/h</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#f5b734"></span>Moderate, 20 to below 30 km/h</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#20a368"></span>Free flowing, at least 30 km/h</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -467,8 +363,6 @@ with analysis_tab:
         "speed_limit_kph",
         "traffic_level",
     ]
-    if actual_speed is not None:
-        table_columns.extend(["actual_speed_kph", "absolute_error_kph"])
     result_table = segment_frame[table_columns].sort_values("forecast_speed_kph")
     st.dataframe(
         result_table.round(2),
@@ -482,14 +376,6 @@ with analysis_tab:
         file_name=f"makati_{model_name}_{horizon}min_forecast.csv",
         mime="text/csv",
     )
-
-    if actual_speed is not None:
-        observed_mae = float(np.mean(np.abs(actual_speed - forecast_speed)))
-        observed_rmse = float(np.sqrt(np.mean((actual_speed - forecast_speed) ** 2)))
-        st.caption(
-            f"Selected interval error: MAE {observed_mae:.3f} km/h and "
-            f"RMSE {observed_rmse:.3f} km/h. The formal reported metrics use every July test window."
-        )
 
     if attention is not None:
         st.subheader("A3T GCN temporal attention")
@@ -506,56 +392,3 @@ with analysis_tab:
             y="Mean attention weight",
             height=275,
         )
-
-with validation_tab:
-    summary = load_summary_metrics().copy()
-    selected_horizon = summary[summary["horizon_minutes"] == horizon].copy()
-    selected_horizon["Model"] = selected_horizon["model"].map(MODEL_LABELS)
-    selected_horizon = selected_horizon.sort_values("mae_kph_mean")
-    st.subheader(f"Held out July performance at {horizon} minutes")
-    st.bar_chart(
-        selected_horizon.set_index("Model"),
-        y=["mae_kph_mean", "rmse_kph_mean"],
-        height=340,
-    )
-    st.dataframe(
-        format_model_table(selected_horizon),
-        hide_index=True,
-        width="stretch",
-    )
-    best = selected_horizon.iloc[0]
-    st.info(
-        f"The lowest test MAE at this horizon is produced by "
-        f"{MODEL_LABELS[str(best['model'])]} at {best['mae_kph_mean']:.3f} km/h. "
-        "The prototype reports this comparison directly and does not assume that the graph model must rank first."
-    )
-    with st.expander("View all final experiment results"):
-        st.dataframe(
-            format_model_table(summary),
-            hide_index=True,
-            width="stretch",
-        )
-
-with method_tab:
-    st.subheader("Prototype configuration")
-    st.markdown(
-        """
-        - The directed graph contains 88 TomTom road segment nodes and 86 ordered road connections.
-        - Each input contains 12 consecutive 15 minute history intervals and eight traffic, road, and time features.
-        - The available horizons are 15, 30, and 60 minutes.
-        - The neural results use five independent training seeds. The prototype can display one seed or their mean prediction.
-        - May is the training partition, June is the validation partition, and July is the held out test partition.
-        - Normalization parameters were fitted on the May training partition only to prevent information leakage.
-        """
-    )
-    st.subheader("Interpretation limits")
-    st.warning(
-        "The saved datasets represent aggregate traffic profiles rather than a continuous live archive. "
-        "The TomTom API mode is a demonstration that replaces only the newest input interval. "
-        "Its preceding eleven intervals come from the selected July test history, so API assisted output "
-        "must not be reported as an independently validated live forecast."
-    )
-    st.caption(
-        "Traffic percentages classify forecast speed relative to each segment's speed limit. "
-        "They describe the share of graph nodes in each condition, not vehicle volume share."
-    )

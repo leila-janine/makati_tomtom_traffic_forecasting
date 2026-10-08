@@ -131,13 +131,13 @@ def denormalize_history_speed(x: np.ndarray, data: dict[str, Any]) -> np.ndarray
     )
 
 
-def traffic_class(speed: float, speed_limit: float) -> str:
-    ratio = speed / max(speed_limit, 1.0)
-    if ratio < 0.25:
+def traffic_class(speed: float) -> str:
+    """Classify a segment using fixed forecast speed thresholds in km/h."""
+    if speed < 10.0:
         return "Heavy"
-    if ratio < 0.50:
+    if speed < 20.0:
         return "Slow"
-    if ratio < 0.75:
+    if speed < 30.0:
         return "Moderate"
     return "Free flowing"
 
@@ -161,10 +161,7 @@ def build_segment_frame(
     frame["current_speed_kph"] = current
     frame["forecast_speed_kph"] = forecast
     frame["change_kph"] = frame["forecast_speed_kph"] - frame["current_speed_kph"]
-    frame["traffic_level"] = [
-        traffic_class(speed, limit)
-        for speed, limit in zip(frame["forecast_speed_kph"], frame["speed_limit_kph"])
-    ]
+    frame["traffic_level"] = frame["forecast_speed_kph"].map(traffic_class)
     frame["color"] = frame["traffic_level"].map(traffic_color)
     if actual is not None:
         frame["actual_speed_kph"] = actual

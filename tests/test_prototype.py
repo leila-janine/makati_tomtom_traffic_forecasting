@@ -13,6 +13,7 @@ from prototype_core import (
     load_metadata,
     load_summary_metrics,
     predict,
+    traffic_class,
 )
 
 
@@ -60,6 +61,14 @@ class PrototypeTests(unittest.TestCase):
         frame = build_segment_frame(current, forecast)
         self.assertEqual(len(frame), 88)
         self.assertFalse(frame["traffic_level"].isna().any())
+
+    def test_speed_threshold_classification_uses_kph(self) -> None:
+        self.assertEqual(traffic_class(9.9), "Heavy")
+        self.assertEqual(traffic_class(10.0), "Slow")
+        self.assertEqual(traffic_class(19.9), "Slow")
+        self.assertEqual(traffic_class(20.0), "Moderate")
+        self.assertEqual(traffic_class(29.9), "Moderate")
+        self.assertEqual(traffic_class(30.0), "Free flowing")
 
 
 if __name__ == "__main__":
